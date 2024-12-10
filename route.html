@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ROUTE - VIETMAP</title>
+    <link
+      rel="icon"
+      href="https://avatars.githubusercontent.com/u/120353918?v=4"
+    />
+    <script src="https://maps.vietmap.vn/sdk/vietmap-gl/4.12/vietmap-gl.js"></script>
+    <link
+      href="https://maps.vietmap.vn/sdk/vietmap-gl/4.12/vietmap-gl.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      #map {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script>
+      const YOUR_API_KEY_HERE = 'YOUR_API_KEY_HERE'
+      const map = new vietmapgl.Map({
+        container: "map",
+        style:
+          `https://maps.vietmap.vn/mt/tm/style.json?apikey=${YOUR_API_KEY_HERE}`,
+        center: [106.71133101237047, 10.801513368825393],
+        zoom: 14,
+      });
+      map.addControl(new vietmapgl.NavigationControl(), "top-right");
+
+      const apiUrl =
+        `https://maps.vietmap.vn/api/route?api-version=1.1&apikey=${YOUR_API_KEY_HERE}&point=10.79628438955497,106.70592293472612&point=10.801891047584164,106.70660958023404&vehicle=motorcycle`;
+
+      fetch(apiUrl)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Lỗi: ${response.status}`);
+          }
+          return response.json();
+        })
+        .then((data) => {
+          if (data && data.paths && Array.isArray(data.paths)) {
+            const paths = data.paths;
+            paths.forEach((paths) => {
+              const encodedPoints = paths.points;
+              const decodedPoints = decodePolyline(encodedPoints); 
+              const lngLatPoints = decodedPoints.map((point) => [point.lng, point.lat]);
+
+            // Hiển thị line lên bản đồ
+              map.on("load", function () {
+                map.addSource("route", {
+                  type: "geojson",
+                  data: {
+                    type: "Feature",
+                    geometry: {
+                      type: "LineString",
+                      coordinates: lngLatPoints,
+                    },
+                  },
+                });
+
+                map.addLayer({
+                  id: "route-line",
+                  type: "line",
+                  source: "route",
+                  paint: {
+                    "line-color": "#FF5733",
+                    "line-width": 5,
+                  },
+                });
+              });
+            });
+          } else {
+            console.error("Dữ liệu không hợp lệ!");
+          }
+        })
+        .catch((error) => {
+          console.error("Lỗi:", error);
+        });
+
+    // Decode Polyline
+      function decodePolyline(encoded) {
+        var points = [];
+        var index = 0,
+          len = encoded.length;
+        var lat = 0,
+          lng = 0;
+
+        while (index < len) {
+          var byte,
+            shift = 0,
+            result = 0;
+          do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+          } while (byte >= 0x20);
+          var dlat = result & 1 ? ~(result >> 1) : result >> 1;
+          lat += dlat;
+
+          shift = 0;
+          result = 0;
+          do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+          } while (byte >= 0x20);
+          var dlng = result & 1 ? ~(result >> 1) : result >> 1;
+          lng += dlng;
+
+          points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+        }
+
+        return points;
+      }
+    </script>
+  </body>
+</html>

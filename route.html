@@ -23,72 +23,318 @@
         width: 100%;
         height: 100%;
       }
+      .button-container {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        z-index: 1000;
+      }
+      .dynamic-button {
+        display: block;
+        margin-bottom: 10px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        font-size: 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+      }
+      .dynamic-button:hover {
+        background-color: #45a049;
+      }
+      .custom-marker {
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: bold;
+        color: white;
+        background-color: #009990;
+        border-radius: 50%;
+        box-shadow: 0px 2px 6px rgba(0, 0, 0, 0.3);
+        cursor: pointer;
+      }
     </style>
   </head>
   <body>
     <div id="map"></div>
+    <div class="button-container" id="button-container"></div>
     <script>
-      const YOUR_API_KEY_HERE = 'YOUR_API_KEY_HERE'
+      const YOUR_API_KEY_HERE = "";
+      let currentMarkers = [];
+
       const map = new vietmapgl.Map({
         container: "map",
-        style:
-          `https://maps.vietmap.vn/mt/tm/style.json?apikey=${YOUR_API_KEY_HERE}`,
+        style: `https://maps.vietmap.vn/mt/tm/style.json?apikey=${YOUR_API_KEY_HERE}`,
         center: [106.71133101237047, 10.801513368825393],
         zoom: 14,
       });
       map.addControl(new vietmapgl.NavigationControl(), "top-right");
 
-      const apiUrl =
-        `https://maps.vietmap.vn/api/route?api-version=1.1&apikey=${YOUR_API_KEY_HERE}&point=10.79628438955497,106.70592293472612&point=10.801891047584164,106.70660958023404&vehicle=motorcycle`;
-
-      fetch(apiUrl)
+      fetch("data.json")
         .then((response) => {
           if (!response.ok) {
-            throw new Error(`Lỗi: ${response.status}`);
+            throw new Error("Lỗi");
           }
           return response.json();
         })
         .then((data) => {
-          if (data && data.paths && Array.isArray(data.paths)) {
-            const paths = data.paths;
-            paths.forEach((paths) => {
-              const encodedPoints = paths.points;
-              const decodedPoints = decodePolyline(encodedPoints); 
-              const lngLatPoints = decodedPoints.map((point) => [point.lng, point.lat]);
+          if (Array.isArray(data)) {
+            const container = document.getElementById("button-container");
 
-            // Hiển thị line lên bản đồ
-              map.on("load", function () {
-                map.addSource("route", {
-                  type: "geojson",
-                  data: {
-                    type: "Feature",
-                    geometry: {
-                      type: "LineString",
-                      coordinates: lngLatPoints,
-                    },
-                  },
-                });
+            data.forEach((item) => {
+              const button = document.createElement("button");
+              button.textContent = `Nhân Viên ${item.id}: ${item.name}`;
+              button.classList.add("dynamic-button");
 
-                map.addLayer({
-                  id: "route-line",
-                  type: "line",
-                  source: "route",
-                  paint: {
-                    "line-color": "#FF5733",
-                    "line-width": 5,
-                  },
-                });
+              button.setAttribute("data-id", item.id);
+
+              button.addEventListener("click", function () {
+                const id = button.getAttribute("data-id");
+                const selectedItem = data.find((i) => i.id == id);
+
+                if (selectedItem) {
+                  const pointsArray = selectedItem.point;
+
+                  // Xóa marker cũ
+                  currentMarkers.forEach((marker) => {
+                    marker.remove();
+                  });
+                  currentMarkers = [];
+
+                  // Lấy ra các điểm point để hiển thị các điểm marker lên bản đồ
+                  pointsArray.forEach((point, index) => {
+                    const markerElement = document.createElement("div");
+                    markerElement.className = "custom-marker";
+                    markerElement.innerHTML = `<div>${index + 1}</div>`;
+
+                    const marker = new vietmapgl.Marker({
+                      element: markerElement,
+                      offset: [0, -15],
+                    })
+                      .setLngLat([point.lng, point.lat])
+                      .addTo(map);
+
+                    if (index >= 0) {
+                      const prevPoint = pointsArray[index + 1];
+                      const popup = new vietmapgl.Popup({
+                        offset: [0, -15],
+                      }).setHTML(`
+                        <h3>Vị trí số ${index + 0}</h3> 
+                    `);
+                      marker.setPopup(popup);
+                      popup.addTo(map);
+                    }
+                    currentMarkers.push(marker);
+                  });
+
+                  const pointsParam = pointsArray
+                    .map((point) => `${point.lat},${point.lng}`)
+                    .join("&point=");
+
+                  const apiUrl = `https://maps.vietmap.vn/api/route?api-version=1.1&apikey=${YOUR_API_KEY_HERE}&point=${pointsParam}&vehicle=motorcycle`;
+
+                  fetch(apiUrl)
+                    .then((response) => {
+                      if (!response.ok) {
+                        throw new Error(`Lỗi: ${response.status}`);
+                      }
+                      return response.json();
+                    })
+                    .then((data) => {
+                      if (data && data.paths && Array.isArray(data.paths)) {
+                        const paths = data.paths;
+
+                        // Xóa đi line cũ
+                        if (map.getLayer("route-line")) {
+                          map.removeLayer("route-line");
+                          map.removeSource("route");
+                        }
+
+                        paths.forEach((path) => {
+                          const encodedPoints = path.points;
+                          const dataInstructions = path.instructions;
+                          const decodedPoints = decodePolyline(encodedPoints);
+                          let segmentCount = 1;
+                          let distanceSegments = [];
+                          let distance = 0;
+                          let inSegment = false;
+                          let previousDistance = 0;
+                          let interval = [];
+                          let middlePoints = [];
+
+                          for (let i = 0; i < dataInstructions.length; i++) {
+                            const currentInstruction = dataInstructions[i];
+
+                            // Bắt đầu tính từ sign = 0
+                            if (currentInstruction.sign === 0 && !inSegment) {
+                              inSegment = true;
+                              distance = currentInstruction.distance;
+                            }
+                            // Cộng dồn distance
+                            else if (inSegment) {
+                              distance += currentInstruction.distance;
+                            }
+
+                            // Khi gặp sign = 5, kết thúc đoạn hiện tại
+                            if (currentInstruction.sign === 5 && inSegment) {
+                              distanceSegments.push({
+                                segment: `Đoạn ${segmentCount}`,
+                                distance,
+                              });
+
+                              // Xử lý interval khi sign = 5
+                              if (
+                                currentInstruction.interval &&
+                                currentInstruction.interval.length > 0
+                              ) {
+                                const uniqueInterval = [
+                                  ...new Set(currentInstruction.interval),
+                                ];
+                                interval.push(...uniqueInterval);
+                              }
+
+                              previousDistance = distance;
+                              segmentCount++;
+                              inSegment = false;
+                            }
+                          }
+
+                          if (inSegment) {
+                            distanceSegments.push({
+                              segment: `Đoạn ${segmentCount}`,
+                              distance,
+                            });
+                          }
+
+                          if (interval.length === 1) {
+                            let startIdx = 0;
+                            let endIdx = interval[0];
+
+                            // Tính điểm trung gian từ 0 -> endIdx
+                            let middleIdx1 = Math.floor(
+                              (startIdx + endIdx) / 2
+                            );
+                            middlePoints.push(decodedPoints[middleIdx1]);
+
+                            startIdx = endIdx;
+                            endIdx = decodedPoints.length - 1;
+                            let middleIdx2 = Math.floor(
+                              (startIdx + endIdx) / 2
+                            );
+                            middlePoints.push(decodedPoints[middleIdx2]);
+                          } else if (interval.length >= 2) {
+                            let startIdx = 0;
+                            let endIdx = interval[0];
+                            let middleIdx1 = Math.floor(
+                              (startIdx + endIdx) / 2
+                            );
+                            middlePoints.push(decodedPoints[middleIdx1]);
+
+                            for (let i = 0; i < interval.length - 1; i++) {
+                              startIdx = interval[i];
+                              endIdx = interval[i + 1];
+
+                              let middleIdx = Math.floor(
+                                (startIdx + endIdx) / 2
+                              );
+                              middlePoints.push(decodedPoints[middleIdx]);
+                            }
+
+                            startIdx = interval[interval.length - 1];
+                            endIdx = decodedPoints.length - 1;
+                            let middleIdx2 = Math.floor(
+                              (startIdx + endIdx) / 2
+                            );
+                            middlePoints.push(decodedPoints[middleIdx2]);
+                          }
+
+                          middlePoints.forEach((point, index) => {
+                            const segmentInfo = distanceSegments[index];
+
+                            const popupContent = segmentInfo
+                              ? `<strong>${
+                                  segmentInfo.segment
+                                }</strong><br>Lộ trình: ${(
+                                  segmentInfo.distance / 1000
+                                ).toFixed(2)} km`
+                              : `<strong>Điểm trung gian ${index + 1}</strong>`;
+
+                            const popup = new vietmapgl.Popup()
+                              .setLngLat([point.lng, point.lat])
+                              .setHTML(popupContent)
+                              .addTo(map);
+                          });
+                          const lngLatPoints = decodedPoints.map((point) => [
+                            point.lng,
+                            point.lat,
+                          ]);
+
+                          map.addSource("route", {
+                            type: "geojson",
+                            data: {
+                              type: "Feature",
+                              geometry: {
+                                type: "LineString",
+                                coordinates: lngLatPoints,
+                              },
+                            },
+                          });
+
+                          map.addLayer({
+                            id: "route-line",
+                            type: "line",
+                            source: "route",
+                            paint: {
+                              "line-color": "#FF5733",
+                              "line-width": 5,
+                            },
+                          });
+
+                          // Tính toán bounding box của line
+                          const bounds = new vietmapgl.LngLatBounds();
+                          lngLatPoints.forEach((point) => {
+                            bounds.extend(point);
+                          });
+
+                          // Pan tới line
+                          map.fitBounds(bounds, {
+                            padding: {
+                              top: 50,
+                              bottom: 50,
+                              left: 50,
+                              right: 50,
+                            },
+                            maxZoom: 15,
+                          });
+                        });
+                      } else {
+                        console.error("Dữ liệu không hợp lệ!");
+                      }
+                    })
+                    .catch((error) => {
+                      console.error("Lỗi:", error);
+                    });
+                }
               });
+
+              container.appendChild(button);
             });
-          } else {
-            console.error("Dữ liệu không hợp lệ!");
           }
-        })
-        .catch((error) => {
-          console.error("Lỗi:", error);
         });
 
-    // Decode Polyline
+      const getMidPoint = (point1, point2) => {
+        return {
+          lat: (point1.lat + point2.lat) / 2,
+          lng: (point1.lng + point2.lng) / 2,
+        };
+      };
+
+      // Decode Polyline
       function decodePolyline(encoded) {
         var points = [];
         var index = 0,
